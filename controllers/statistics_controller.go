@@ -2,15 +2,15 @@ package controllers
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog/log"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"hackathon-api/configs"
 	"hackathon-api/models"
 	"hackathon-api/responses"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 //https://www.mongodb.com/blog/post/quick-start-golang--mongodb--data-aggregation-pipeline
@@ -19,33 +19,25 @@ var statsCollection = configs.GetCollection(configs.DB, "donations")
 
 func SumDonationsByMoney() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		//money := c.Param("money")
 		defer cancel()
 
-		stats, found := queryCache.Get("stats")
-
-		if found {
-			c.JSON(http.StatusOK, stats)
-			return
-		}
-
+		//matchStage := bson.D{{"$match", bson.D{{"moneyType", money}}}}
 		groupStage := bson.D{{"$group", bson.D{{"_id", "$moneyType"}, {"total", bson.D{{"$sum", "$amount"}}}}}}
+
 		resultCursor, err := statsCollection.Aggregate(ctx, mongo.Pipeline{ /*matchStage,*/ groupStage})
 		count, err := statsCollection.CountDocuments(ctx, bson.M{})
 
 		if err != nil {
-			log.Err(err)
-			c.JSON(http.StatusInternalServerError, responses.DonationResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
-			return
-
+			println(err)
 		}
 
 		var resultData []models.Statistics
+		resultCursor.All(ctx, resultData)
 
 		if err = resultCursor.All(ctx, &resultData); err != nil {
-			log.Err(err)
-			c.JSON(http.StatusInternalServerError, responses.DonationResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
-			return
+			panic(err)
 		}
 
 		var total float64 = 0
@@ -64,12 +56,6 @@ func SumDonationsByMoney() gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, responses.DonationResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
 			return
 		}
-
-		queryCache.Set("stats", StatResponse{
-			Stats: resultData,
-			Total: total,
-			Count: count,
-		}, 30*time.Second)
 
 		c.JSON(http.StatusOK, StatResponse{
 			Stats: resultData,

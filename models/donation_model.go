@@ -22,7 +22,7 @@ func GetMoney() map[string]float64 {
 	moneys["ETH"] = 2.68
 	moneys["LTC"] = 1.09
 	moneys["XMR"] = 1.45
-	moneys["EUR"] = 1.12
+	moneys["EuR"] = 1.12
 	moneys["USD"] = 1
 
 	return moneys

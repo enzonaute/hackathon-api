@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"hackathon-api/configs"
 	"hackathon-api/models"
@@ -195,13 +194,6 @@ func GetAllDonationsPaginated() gin.HandlerFunc {
 			return
 		}
 
-		donations, found := queryCache.Get(c.Request.RequestURI)
-
-		if found {
-			c.JSON(http.StatusOK, donations)
-			return
-		}
-
 		skipItems := itemsPerPage * (page - 1)
 		findOptions := options.FindOptions{
 			Limit: &itemsPerPage,
@@ -209,48 +201,45 @@ func GetAllDonationsPaginated() gin.HandlerFunc {
 			Sort:  bson.D{{sortBy, sortDesc}},
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		var Donations = make([]models.Donation, 0)
 		defer cancel()
 
-		// No search term
-		var pipeline = bson.D{}
+		likeFilter := bson.M{
+			"$regex": primitive.Regex{
+				Pattern: "^.*" + searchTerm + ".*",
+				Options: "i",
+			},
+		}
 
-		if len(searchTerm) > 0 {
-			likeFilter := bson.M{
-				"$regex": primitive.Regex{
-					Pattern: "^.*" + searchTerm + ".*",
-					Options: "i",
-				},
-			}
-
-			pipeline = bson.D{
-				{"$or", []interface{}{
-					bson.D{{"donatorName", likeFilter}},
-					bson.D{{"pdfRef", likeFilter}},
-				}},
-			}
-
+		pipeline := bson.D{
+			{"$or", []interface{}{
+				bson.D{{"donatorName", likeFilter}},
+				bson.D{{"pdfRef", likeFilter}},
+			}},
 		}
 
 		results, err := donationCollection.Find(ctx, pipeline, &findOptions)
 		count, err := donationCollection.CountDocuments(ctx, pipeline)
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, responses.DonationResponse{Status: http.StatusBadRequest, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
-			return
-		}
-
-		//reading from the db in an optimal way
-		if err = results.All(ctx, &Donations); err != nil {
-			log.Err(err)
 			c.JSON(http.StatusInternalServerError, responses.DonationResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
 			return
 		}
 
-		data := responses.DonationResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": Donations, "total": count}}
-		queryCache.Set(c.Request.RequestURI, data, 60*time.Second)
-		c.JSON(http.StatusOK, data)
+		//reading from the db in an optimal way
+		defer results.Close(ctx)
+		for results.Next(ctx) {
+			var singleDonation models.Donation
+			if err = results.Decode(&singleDonation); err != nil {
+				c.JSON(http.StatusInternalServerError, responses.DonationResponse{Status: http.StatusInternalServerError, Message: "error", Data: map[string]interface{}{"data": err.Error()}})
+			}
+			Donations = append(Donations, singleDonation)
+		}
+
+		c.JSON(http.StatusOK,
+			responses.DonationResponse{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": Donations, "total": count}},
+		)
 	}
 }
 
